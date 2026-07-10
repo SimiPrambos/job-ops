@@ -193,11 +193,21 @@ async function fetchWithBrowser(args: {
 /**
  * Fetch Glints search results via Camoufox.
  *
+ * Root cause (verified locally + against homelab logs):
+ * - Plain HTTP always gets Glints Firewall 403.
+ * - Camoufox can pass the WAF, but Docker/datacenter headless is often still
+ *   blocked even after a headed Solve. Glints is fingerprint/IP based — the
+ *   CF-style "save cf_clearance, retry headless" model does not apply.
+ * - Solve only proves headed Camoufox can open the explore page. The scrape
+ *   after Solve must therefore run headed while Xvfb from the challenge
+ *   viewer is still up.
+ *
  * Strategy:
- * 1. Headless first (safe when Xvfb is not running).
- * 2. If blocked and a headed solve already persisted a session, retry headed.
- *    After Solve, `ensureChallengeViewer` leaves Xvfb on DISPLAY=:99, so headed
- *    works for the pipeline retry without asking the user again.
+ * 1. If a headed Solve already persisted a session and a display is available,
+ *    scrape headed immediately.
+ * 2. Otherwise try headless (works on many local networks).
+ * 3. If headless is blocked but a solved session + display exist, retry headed.
+ * 4. Otherwise return challengeRequired so the pipeline can pause for Solve.
  */
 export async function fetchGlintsSearchPageBrowser(args: {
   market: GlintsMarket;
@@ -205,10 +215,37 @@ export async function fetchGlintsSearchPageBrowser(args: {
   page: number;
   pageSize: number;
 }): Promise<GlintsPageResult> {
+  const cookieJar = await readCookieJar(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+  // Linux containers need DISPLAY (Xvfb). macOS/Windows headed Camoufox works
+  // without DISPLAY when running outside Docker.
+  const displayAvailable =
+    process.platform !== "linux" || Boolean(process.env.DISPLAY?.trim());
+  const hasSolvedSession = cookieJar.hasCookies || Boolean(cookieJar.userAgent);
+  const canUseHeaded = displayAvailable && hasSolvedSession;
+
+  if (canUseHeaded) {
+    try {
+      const headedResult = await fetchWithBrowser({
+        ...args,
+        headless: false,
+        invalidateOnBlock: true,
+      });
+      if (!headedResult.challengeRequired) {
+        return headedResult;
+      }
+      // Headed still blocked — fall through to headless/challenge pause.
+    } catch (error) {
+      if (!isMissingDisplayError(error)) {
+        throw error;
+      }
+      // Xvfb not up; continue with headless.
+    }
+  }
+
   const headlessResult = await fetchWithBrowser({
     ...args,
     headless: true,
-    // Keep any previously solved session for a headed retry.
+    // Keep any previously solved session for a headed retry below.
     invalidateOnBlock: false,
   });
 
@@ -216,16 +253,7 @@ export async function fetchGlintsSearchPageBrowser(args: {
     return headlessResult;
   }
 
-  const cookieJar = await readCookieJar(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
-  // Linux containers need DISPLAY (Xvfb). macOS/Windows headed Camoufox works
-  // without DISPLAY when running outside Docker.
-  const displayAvailable =
-    process.platform !== "linux" || Boolean(process.env.DISPLAY?.trim());
-  const canRetryHeaded =
-    displayAvailable &&
-    (cookieJar.hasCookies || Boolean(cookieJar.userAgent));
-
-  if (!canRetryHeaded) {
+  if (!canUseHeaded) {
     return headlessResult;
   }
 
@@ -237,7 +265,6 @@ export async function fetchGlintsSearchPageBrowser(args: {
     });
   } catch (error) {
     if (isMissingDisplayError(error)) {
-      // Xvfb is not up yet — fall back to the original challenge pause.
       return headlessResult;
     }
     throw error;

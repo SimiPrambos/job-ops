@@ -52,10 +52,11 @@ Defaults and constraints:
 
 ### Health check fails with 503
 
-- Glints frequently WAF-blocks datacenter IPs and headless browsers. The extractor falls back to Playwright and can pause for a VNC challenge solve (which starts Xvfb before launching headed Camoufox).
-- Glints uses a custom firewall page, not Cloudflare — after Solve, Job Ops persists the headed session cookies/User-Agent even when no `cf_clearance` cookie exists.
-- After Solve, the pipeline retry keeps headless first, then automatically retries headed while Xvfb is still running so Glints can complete without asking you to solve twice.
-- Retry `GET /api/glints/health` after cookies have been persisted under the cloudflare cookie storage dir.
+- Glints frequently WAF-blocks plain HTTP (always) and often blocks **headless** Camoufox from datacenter/Docker IPs.
+- Local residential networks may pass headless without any Solve step (verified: `runGlints` returns jobs on macOS).
+- Glints is **not** Cloudflare: a headed Solve does not mint `cf_clearance`, and cookies alone do not make headless work in Docker.
+- After Solve, the extractor scrapes with **headed** Camoufox while Xvfb from the challenge viewer is still running.
+- Retry `GET /api/glints/health` after a successful headed session has been persisted.
 
 ### Solve fails with "no reusable Cloudflare clearance cookie"
 
