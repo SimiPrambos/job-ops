@@ -110,6 +110,20 @@ function toSetCookieHeader(cookie: PlaywrightCookie): string {
   return parts.join("; ");
 }
 
+export interface SaveCookiesOptions {
+  /**
+   * Persist every cookie from the context instead of the CF/session allowlist.
+   * Use for non-Cloudflare WAFs (e.g. Glints firewall) where clearance is not
+   * named `cf_clearance`.
+   */
+  persistAll?: boolean;
+  /**
+   * Write a jar even when no cookies matched, so the headed User-Agent can
+   * still be reused on the next headless attempt.
+   */
+  allowEmptyWithUserAgent?: boolean;
+}
+
 /**
  * Saves the browser context's cookies to disk, filtered to CF-relevant cookies.
  * Call this after a successful navigation through a CF challenge.
@@ -122,19 +136,21 @@ export async function saveCookies(
   context: BrowserContext,
   extractorId: string,
   storageDir?: string,
+  options: SaveCookiesOptions = {},
 ): Promise<number> {
   const resolvedStorageDir = getCloudflareCookieStorageDir(storageDir);
   const allCookies = await context.cookies();
 
   // Keep CF-related cookies plus any with "session" or "auth" in the name
-  const relevant = allCookies.filter(
-    (c) =>
-      PERSIST_COOKIE_NAMES.has(c.name) ||
-      c.name.toLowerCase().includes("session") ||
-      c.name.toLowerCase().includes("auth"),
-  );
-
-  if (relevant.length === 0) return 0;
+  // unless the caller asked to persist the full jar (non-CF WAFs).
+  const relevant = options.persistAll
+    ? allCookies.filter((cookie) => !isExpired(cookie))
+    : allCookies.filter(
+        (c) =>
+          PERSIST_COOKIE_NAMES.has(c.name) ||
+          c.name.toLowerCase().includes("session") ||
+          c.name.toLowerCase().includes("auth"),
+      );
 
   // Auto-capture the browser's User-Agent so headless retries can reuse it.
   // CF ties cf_clearance to the UA + TLS fingerprint — without matching UA
@@ -144,6 +160,14 @@ export async function saveCookies(
   const page = context.pages()[0];
   if (page) {
     userAgent = await page.evaluate(() => navigator.userAgent);
+  }
+
+  if (relevant.length === 0 && !options.allowEmptyWithUserAgent) {
+    return 0;
+  }
+
+  if (relevant.length === 0 && !userAgent) {
+    return 0;
   }
 
   const jar: PersistedCookieJar = {

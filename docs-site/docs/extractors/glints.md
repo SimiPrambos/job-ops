@@ -52,8 +52,14 @@ Defaults and constraints:
 
 ### Health check fails with 503
 
-- Glints frequently WAF-blocks datacenter IPs. The extractor falls back to Playwright; ensure Camoufox binaries are available in the runtime image.
+- Glints frequently WAF-blocks datacenter IPs and headless browsers. The extractor falls back to Playwright (headed when `DISPLAY` is set, e.g. in Docker) and can pause for a VNC challenge solve.
+- Glints uses a custom firewall page, not Cloudflare — after Solve, Job Ops persists the headed session cookies/User-Agent even when no `cf_clearance` cookie exists.
 - Retry `GET /api/glints/health` after cookies have been persisted under the cloudflare cookie storage dir.
+
+### Solve fails with "no reusable Cloudflare clearance cookie"
+
+- This used to happen because the shared solver required `cf_clearance` even for Glints' non-Cloudflare firewall.
+- Current builds treat Glints firewall as a non-CF wait page and accept a headed session without clearance. Redeploy/restart so the updated `browser-utils` solver is loaded.
 
 ### Results look incomplete
 

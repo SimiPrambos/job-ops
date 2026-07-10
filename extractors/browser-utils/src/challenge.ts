@@ -23,15 +23,59 @@ const CF_CHALLENGE_MARKERS = [
 ] as const;
 
 /**
+ * Non-Cloudflare interstitials that still need a headed human/browser pass.
+ * These pages are not CF challenges, so they never mint `cf_clearance`.
+ */
+const NON_CF_BLOCK_MARKERS = [
+  "Glints - Firewall",
+  // Generic vendor firewall pages sometimes used in front of job boards
+  "<title>Firewall</title>",
+] as const;
+
+function htmlLooksLikeCfChallenge(html: string): boolean {
+  return CF_CHALLENGE_MARKERS.some((marker) => html.includes(marker));
+}
+
+function htmlLooksLikeNonCfBlock(html: string): boolean {
+  return NON_CF_BLOCK_MARKERS.some((marker) => html.includes(marker));
+}
+
+/**
  * Checks whether a page is currently showing a Cloudflare challenge.
  * Works by inspecting page content — no network interception needed.
  */
 export async function isChallengePage(page: Page): Promise<boolean> {
   try {
     const html = await page.content();
-    return CF_CHALLENGE_MARKERS.some((marker) => html.includes(marker));
+    return htmlLooksLikeCfChallenge(html);
   } catch {
     // Page may have navigated or crashed — treat as not a challenge
+    return false;
+  }
+}
+
+/**
+ * Checks whether a page is a non-Cloudflare blocking interstitial
+ * (for example Glints' custom firewall page).
+ */
+export async function isNonCfBlockPage(page: Page): Promise<boolean> {
+  try {
+    const html = await page.content();
+    return htmlLooksLikeNonCfBlock(html);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the headed solver should keep waiting for a human/browser pass.
+ * Covers both Cloudflare challenges and known non-CF firewall pages.
+ */
+export async function isSolverWaitPage(page: Page): Promise<boolean> {
+  try {
+    const html = await page.content();
+    return htmlLooksLikeCfChallenge(html) || htmlLooksLikeNonCfBlock(html);
+  } catch {
     return false;
   }
 }

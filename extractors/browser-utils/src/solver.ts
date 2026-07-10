@@ -1,5 +1,5 @@
 import type { BrowserContext } from "playwright";
-import { isChallengePage } from "./challenge.js";
+import { isChallengePage, isSolverWaitPage } from "./challenge.js";
 import { readCookieJar, saveCookies } from "./cookies.js";
 import { createLaunchOptions } from "./launch.js";
 
@@ -16,16 +16,39 @@ function noReusableCookiesError(): SolverResult {
   };
 }
 
+function noSessionError(): SolverResult {
+  return {
+    status: "error",
+    message:
+      "Challenge appeared solved, but no reusable browser session (cookies or User-Agent) was saved.",
+  };
+}
+
 async function saveReusableCookies(
   context: BrowserContext,
   extractorId: string,
   storageDir: string,
+  options: { requireClearanceCookie: boolean },
 ): Promise<number | null> {
-  const cookiesSaved = await saveCookies(context, extractorId, storageDir);
-  if (cookiesSaved === 0) return null;
+  const cookiesSaved = await saveCookies(context, extractorId, storageDir, {
+    persistAll: !options.requireClearanceCookie,
+    allowEmptyWithUserAgent: !options.requireClearanceCookie,
+  });
 
   const jar = await readCookieJar(extractorId, storageDir);
-  return jar.hasClearanceCookie ? cookiesSaved : null;
+
+  if (options.requireClearanceCookie) {
+    if (cookiesSaved === 0) return null;
+    return jar.hasClearanceCookie ? cookiesSaved : null;
+  }
+
+  // Non-CF WAFs (e.g. Glints) never mint cf_clearance. A headed pass is still
+  // useful when we persist cookies and/or the Camoufox User-Agent for retry.
+  if (jar.hasCookies || jar.userAgent) {
+    return cookiesSaved;
+  }
+
+  return null;
 }
 
 const SOLVED_PAGE = `data:text/html,${encodeURIComponent(`<!DOCTYPE html>
@@ -47,6 +70,10 @@ const SOLVED_PAGE = `data:text/html,${encodeURIComponent(`<!DOCTYPE html>
  *
  * The saved cookies (especially cf_clearance) allow subsequent headless runs
  * to skip the challenge until the cookie expires.
+ *
+ * Non-Cloudflare firewall pages (e.g. Glints) are also supported: the solver
+ * waits for the interstitial to clear and persists the full cookie jar plus
+ * User-Agent without requiring `cf_clearance`.
  *
  * @param url - The URL that triggered the challenge
  * @param extractorId - Used to namespace the saved cookies
@@ -80,33 +107,46 @@ export async function solveChallenge(
       timeout: 30_000,
     });
 
-    // If there's no challenge, we're done — save cookies anyway since the
-    // browser session established a valid cf_clearance
-    if (!(await isChallengePage(page))) {
+    const initialCfChallenge = await isChallengePage(page);
+    const initialWait = await isSolverWaitPage(page);
+
+    // If there's no challenge/firewall interstitial, we're done — save the
+    // headed session so the extractor retry can reuse UA (+ cookies if any).
+    if (!initialWait) {
       const cookiesSaved = await saveReusableCookies(
         context,
         extractorId,
         storageDir,
+        { requireClearanceCookie: false },
       );
-      if (cookiesSaved === null) return noReusableCookiesError();
+      if (cookiesSaved === null) return noSessionError();
       await showSolvedPage(page);
       return { status: "solved", cookiesSaved };
     }
 
-    // Poll until the challenge is resolved or timeout
+    // Poll until the challenge/firewall is resolved or timeout
     const start = Date.now();
     const pollInterval = 2_000;
 
     while (Date.now() - start < timeoutMs) {
       await page.waitForTimeout(pollInterval);
 
-      if (!(await isChallengePage(page))) {
+      if (!(await isSolverWaitPage(page))) {
         const cookiesSaved = await saveReusableCookies(
           context,
           extractorId,
           storageDir,
+          {
+            // Only Cloudflare challenges mint cf_clearance. Non-CF firewalls
+            // (Glints, etc.) must be allowed to succeed without it.
+            requireClearanceCookie: initialCfChallenge,
+          },
         );
-        if (cookiesSaved === null) return noReusableCookiesError();
+        if (cookiesSaved === null) {
+          return initialCfChallenge
+            ? noReusableCookiesError()
+            : noSessionError();
+        }
         await showSolvedPage(page);
         return { status: "solved", cookiesSaved };
       }

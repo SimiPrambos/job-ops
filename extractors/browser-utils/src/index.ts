@@ -13,6 +13,8 @@ export {
   type ChallengeResult,
   isChallengePage,
   isChallengeResponse,
+  isNonCfBlockPage,
+  isSolverWaitPage,
   navigateWithChallenge,
   waitForChallengeResolution,
 } from "./challenge.js";
@@ -25,6 +27,7 @@ export {
   loadCookies,
   type PersistedFetchCookieJarInfo,
   readCookieJar,
+  type SaveCookiesOptions,
   saveCookies,
 } from "./cookies.js";
 export {

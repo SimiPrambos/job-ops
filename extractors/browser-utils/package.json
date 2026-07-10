@@ -19,10 +19,12 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "playwright": "*",
-    "typescript": "~5.9.0"
+    "typescript": "~5.9.0",
+    "vitest": "^4.0.16"
   },
   "scripts": {
-    "check:types": "tsc --noEmit"
+    "check:types": "tsc --noEmit",
+    "test:run": "vitest run"
   },
   "license": "SEE LICENSE IN ../../LICENSE"
 }

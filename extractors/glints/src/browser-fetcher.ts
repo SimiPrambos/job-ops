@@ -3,7 +3,9 @@ import {
   getCloudflareCookieStorageDir,
   invalidateCookies,
   isChallengePage,
+  isNonCfBlockPage,
   loadCookies,
+  readCookieJar,
   saveCookies,
   waitForChallengeResolution,
 } from "browser-utils";
@@ -18,6 +20,13 @@ const NAVIGATION_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 45_000;
 const COOKIE_STORAGE_DIR = getCloudflareCookieStorageDir();
 
+function shouldUseHeadedBrowser(): boolean {
+  // Docker / challenge-viewer environments expose DISPLAY. Glints' WAF is
+  // fingerprint-sensitive and often passes headed Camoufox while blocking
+  // headless — prefer headed when a display is available.
+  return Boolean(process.env.DISPLAY?.trim());
+}
+
 async function assertNoBlockingChallenge(
   page: Page,
   url: string,
@@ -25,7 +34,10 @@ async function assertNoBlockingChallenge(
   if (await isChallengePage(page)) {
     const challenge = await waitForChallengeResolution(page, 30_000);
     if (challenge.status === "passed") {
-      await saveCookies(page.context(), EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+      await saveCookies(page.context(), EXTRACTOR_ID, COOKIE_STORAGE_DIR, {
+        persistAll: true,
+        allowEmptyWithUserAgent: true,
+      });
       return null;
     }
 
@@ -33,11 +45,7 @@ async function assertNoBlockingChallenge(
     return url;
   }
 
-  const html = await page.content();
-  if (
-    html.toLowerCase().includes("firewall") ||
-    html.toLowerCase().includes("access denied")
-  ) {
+  if (await isNonCfBlockPage(page)) {
     await invalidateCookies(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
     return url;
   }
@@ -101,9 +109,13 @@ export async function fetchGlintsSearchPageBrowser(args: {
   let browser: Browser | null = null;
 
   try {
-    const { launchOptions } = await createLaunchOptions({ headless: true });
+    const cookieJar = await readCookieJar(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+    const headed = shouldUseHeadedBrowser();
+    const { launchOptions } = await createLaunchOptions({ headless: !headed });
     browser = await firefox.launch(launchOptions);
-    const context = await browser.newContext();
+    const context = await browser.newContext({
+      ...(cookieJar.userAgent ? { userAgent: cookieJar.userAgent } : {}),
+    });
     await loadCookies(context, EXTRACTOR_ID, COOKIE_STORAGE_DIR);
     const page = await context.newPage();
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
@@ -131,7 +143,10 @@ export async function fetchGlintsSearchPageBrowser(args: {
       pageSize: args.pageSize,
     });
 
-    await saveCookies(context, EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+    await saveCookies(context, EXTRACTOR_ID, COOKIE_STORAGE_DIR, {
+      persistAll: true,
+      allowEmptyWithUserAgent: true,
+    });
 
     const extracted = extractJobsInPage(payload);
     if (extracted.errorMessage && extracted.jobs.length === 0) {
