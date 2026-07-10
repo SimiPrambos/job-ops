@@ -20,13 +20,6 @@ const NAVIGATION_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 45_000;
 const COOKIE_STORAGE_DIR = getCloudflareCookieStorageDir();
 
-function shouldUseHeadedBrowser(): boolean {
-  // Docker / challenge-viewer environments expose DISPLAY. Glints' WAF is
-  // fingerprint-sensitive and often passes headed Camoufox while blocking
-  // headless — prefer headed when a display is available.
-  return Boolean(process.env.DISPLAY?.trim());
-}
-
 async function assertNoBlockingChallenge(
   page: Page,
   url: string,
@@ -110,8 +103,10 @@ export async function fetchGlintsSearchPageBrowser(args: {
 
   try {
     const cookieJar = await readCookieJar(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
-    const headed = shouldUseHeadedBrowser();
-    const { launchOptions } = await createLaunchOptions({ headless: !headed });
+    // Always headless here. DISPLAY=:99 is set in Docker even when Xvfb is
+    // not running; headed launches belong to the challenge-viewer solve flow
+    // (ensureChallengeViewer starts Xvfb first).
+    const { launchOptions } = await createLaunchOptions({ headless: true });
     browser = await firefox.launch(launchOptions);
     const context = await browser.newContext({
       ...(cookieJar.userAgent ? { userAgent: cookieJar.userAgent } : {}),

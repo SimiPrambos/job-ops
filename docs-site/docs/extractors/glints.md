@@ -52,7 +52,7 @@ Defaults and constraints:
 
 ### Health check fails with 503
 
-- Glints frequently WAF-blocks datacenter IPs and headless browsers. The extractor falls back to Playwright (headed when `DISPLAY` is set, e.g. in Docker) and can pause for a VNC challenge solve.
+- Glints frequently WAF-blocks datacenter IPs and headless browsers. The extractor falls back to Playwright and can pause for a VNC challenge solve (which starts Xvfb before launching headed Camoufox).
 - Glints uses a custom firewall page, not Cloudflare — after Solve, Job Ops persists the headed session cookies/User-Agent even when no `cf_clearance` cookie exists.
 - Retry `GET /api/glints/health` after cookies have been persisted under the cloudflare cookie storage dir.
 
