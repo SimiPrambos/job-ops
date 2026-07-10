@@ -20,9 +20,15 @@ const NAVIGATION_TIMEOUT_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 45_000;
 const COOKIE_STORAGE_DIR = getCloudflareCookieStorageDir();
 
+function isMissingDisplayError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /cannot open display/i.test(message);
+}
+
 async function assertNoBlockingChallenge(
   page: Page,
   url: string,
+  options: { invalidateOnBlock: boolean },
 ): Promise<string | null> {
   if (await isChallengePage(page)) {
     const challenge = await waitForChallengeResolution(page, 30_000);
@@ -34,12 +40,18 @@ async function assertNoBlockingChallenge(
       return null;
     }
 
-    await invalidateCookies(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+    if (options.invalidateOnBlock) {
+      await invalidateCookies(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+    }
     return url;
   }
 
   if (await isNonCfBlockPage(page)) {
-    await invalidateCookies(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+    // Do not wipe a just-solved headed session when headless is still blocked.
+    // The caller may retry headed while Xvfb from the challenge viewer is up.
+    if (options.invalidateOnBlock) {
+      await invalidateCookies(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+    }
     return url;
   }
 
@@ -92,21 +104,22 @@ async function postGraphQlFromPage(args: {
   );
 }
 
-export async function fetchGlintsSearchPageBrowser(args: {
+async function fetchWithBrowser(args: {
   market: GlintsMarket;
   searchTerm: string;
   page: number;
   pageSize: number;
+  headless: boolean;
+  invalidateOnBlock: boolean;
 }): Promise<GlintsPageResult> {
   const exploreUrl = buildGlintsExploreUrl(args.market);
   let browser: Browser | null = null;
 
   try {
     const cookieJar = await readCookieJar(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
-    // Always headless here. DISPLAY=:99 is set in Docker even when Xvfb is
-    // not running; headed launches belong to the challenge-viewer solve flow
-    // (ensureChallengeViewer starts Xvfb first).
-    const { launchOptions } = await createLaunchOptions({ headless: true });
+    const { launchOptions } = await createLaunchOptions({
+      headless: args.headless,
+    });
     browser = await firefox.launch(launchOptions);
     const context = await browser.newContext({
       ...(cookieJar.userAgent ? { userAgent: cookieJar.userAgent } : {}),
@@ -120,7 +133,9 @@ export async function fetchGlintsSearchPageBrowser(args: {
       timeout: NAVIGATION_TIMEOUT_MS,
     });
 
-    const challengeUrl = await assertNoBlockingChallenge(page, exploreUrl);
+    const challengeUrl = await assertNoBlockingChallenge(page, exploreUrl, {
+      invalidateOnBlock: args.invalidateOnBlock,
+    });
     if (challengeUrl) {
       return {
         jobs: [],
@@ -156,6 +171,10 @@ export async function fetchGlintsSearchPageBrowser(args: {
       usedBrowser: true,
     };
   } catch (error) {
+    if (isMissingDisplayError(error)) {
+      throw error;
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     if (/challenge|firewall|access denied|403/i.test(message)) {
       return {
@@ -168,5 +187,59 @@ export async function fetchGlintsSearchPageBrowser(args: {
     throw error;
   } finally {
     await browser?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Fetch Glints search results via Camoufox.
+ *
+ * Strategy:
+ * 1. Headless first (safe when Xvfb is not running).
+ * 2. If blocked and a headed solve already persisted a session, retry headed.
+ *    After Solve, `ensureChallengeViewer` leaves Xvfb on DISPLAY=:99, so headed
+ *    works for the pipeline retry without asking the user again.
+ */
+export async function fetchGlintsSearchPageBrowser(args: {
+  market: GlintsMarket;
+  searchTerm: string;
+  page: number;
+  pageSize: number;
+}): Promise<GlintsPageResult> {
+  const headlessResult = await fetchWithBrowser({
+    ...args,
+    headless: true,
+    // Keep any previously solved session for a headed retry.
+    invalidateOnBlock: false,
+  });
+
+  if (!headlessResult.challengeRequired) {
+    return headlessResult;
+  }
+
+  const cookieJar = await readCookieJar(EXTRACTOR_ID, COOKIE_STORAGE_DIR);
+  // Linux containers need DISPLAY (Xvfb). macOS/Windows headed Camoufox works
+  // without DISPLAY when running outside Docker.
+  const displayAvailable =
+    process.platform !== "linux" || Boolean(process.env.DISPLAY?.trim());
+  const canRetryHeaded =
+    displayAvailable &&
+    (cookieJar.hasCookies || Boolean(cookieJar.userAgent));
+
+  if (!canRetryHeaded) {
+    return headlessResult;
+  }
+
+  try {
+    return await fetchWithBrowser({
+      ...args,
+      headless: false,
+      invalidateOnBlock: true,
+    });
+  } catch (error) {
+    if (isMissingDisplayError(error)) {
+      // Xvfb is not up yet — fall back to the original challenge pause.
+      return headlessResult;
+    }
+    throw error;
   }
 }
