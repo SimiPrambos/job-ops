@@ -1027,6 +1027,7 @@ describe("OrchestratorPage", () => {
         jobspyResultsWanted: 150,
         gradcrackerMaxJobsPerTerm: 150,
         naukriMaxJobsPerTerm: 150,
+        glintsMaxJobsPerTerm: 150,
         ukvisajobsMaxJobs: 150,
         adzunaMaxJobsPerTerm: 150,
         startupjobsMaxJobsPerTerm: 150,

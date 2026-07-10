@@ -1,0 +1,26 @@
+{
+  "name": "glints-extractor",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Glints extractor - fetches jobs from glints.com SEA markets via GraphQL",
+  "dependencies": {
+    "browser-utils": "^0.0.1",
+    "camoufox-js": "^0.9.2",
+    "job-ops-shared": "^1.0.0",
+    "playwright": "^1.57.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~5.9.0",
+    "vitest": "^4.0.16"
+  },
+  "optionalDependencies": {
+    "impit-linux-x64-gnu": "^0.1.0"
+  },
+  "scripts": {
+    "check:types": "tsc --noEmit",
+    "test:run": "vitest run",
+    "get-binaries": "camoufox-js fetch"
+  },
+  "license": "SEE LICENSE IN ../../LICENSE"
+}

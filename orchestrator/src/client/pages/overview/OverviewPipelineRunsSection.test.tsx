@@ -104,6 +104,7 @@ describe("OverviewPipelineRunsSection", () => {
             startupjobsMaxJobsPerTerm: 50,
             jobindexMaxJobsPerTerm: 50,
             naukriMaxJobsPerTerm: 50,
+            glintsMaxJobsPerTerm: 50,
             jobspyResultsWanted: 20,
           },
           autoSkipScoreThreshold: 60,

@@ -16,6 +16,7 @@
     "check:all": "./orchestrator/node_modules/.bin/biome ci .",
     "format:all": "./orchestrator/node_modules/.bin/biome format . --write",
     "check:types:gradcracker": "npm --workspace gradcracker-extractor run check:types",
+    "check:types:glints": "npm --workspace glints-extractor run check:types",
     "docs:dev": "npm --workspace docs-site run start",
     "docs:build": "npm --workspace docs-site run build",
     "check:docs": "npm --workspace docs-site run build",

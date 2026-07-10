@@ -57,6 +57,7 @@ jobs:
           - startupjobs-extractor
           - workingnomads-extractor
           - ukvisajobs-extractor
+          - glints-extractor
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node
